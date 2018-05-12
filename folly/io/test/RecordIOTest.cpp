@@ -1,5 +1,5 @@
 /*
- * Copyright 2017 Facebook, Inc.
+ * Copyright 2013-present Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -168,7 +168,7 @@ TEST(RecordIOTest, ExtraMagic) {
   EXPECT_EQ(0, lseek(file.fd(), 0, SEEK_SET));
   EXPECT_EQ(sizeof(buf), read(file.fd(), buf, sizeof(buf)));
   // Append an extra magic
-  const uint32_t magic = recordio_helpers::detail::Header::kMagic;
+  const uint32_t magic = recordio_helpers::recordio_detail::Header::kMagic;
   EXPECT_EQ(sizeof(magic), write(file.fd(), &magic, sizeof(magic)));
   // and an extra record
   EXPECT_EQ(sizeof(buf), write(file.fd(), buf, sizeof(buf)));

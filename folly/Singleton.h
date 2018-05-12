@@ -1,5 +1,5 @@
 /*
- * Copyright 2017 Facebook, Inc.
+ * Copyright 2014-present Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 // SingletonVault - a library to manage the creation and destruction
 // of interdependent singletons.
 //
@@ -125,12 +124,13 @@
 #include <folly/Exception.h>
 #include <folly/Executor.h>
 #include <folly/Memory.h>
-#include <folly/RWSpinLock.h>
 #include <folly/Synchronized.h>
+#include <folly/detail/Singleton.h>
 #include <folly/detail/StaticSingletonManager.h>
 #include <folly/experimental/ReadMostlySharedPtr.h>
 #include <folly/hash/Hash.h>
 #include <folly/synchronization/Baton.h>
+#include <folly/synchronization/RWSpinLock.h>
 
 #include <algorithm>
 #include <atomic>
@@ -180,8 +180,6 @@ namespace folly {
 class SingletonVault;
 
 namespace detail {
-
-struct DefaultTag {};
 
 // A TypeDescriptor is the unique handle for a given singleton.  It is
 // a combinaiton of the type and of the optional name, and is used as
@@ -567,14 +565,14 @@ class Singleton {
   // Generally your program life cycle should be fine with calling
   // get() repeatedly rather than saving the reference, and then not
   // call get() during process shutdown.
-  FOLLY_DEPRECATED("Replaced by try_get")
+  [[deprecated("Replaced by try_get")]]
   static T* get() { return getEntry().get(); }
 
   // If, however, you do need to hold a reference to the specific
   // singleton, you can try to do so with a weak_ptr.  Avoid this when
   // possible but the inability to lock the weak pointer can be a
   // signal that the vault has been destroyed.
-  FOLLY_DEPRECATED("Replaced by try_get")
+  [[deprecated("Replaced by try_get")]]
   static std::weak_ptr<T> get_weak() { return getEntry().get_weak(); }
 
   // Preferred alternative to get_weak, it returns shared_ptr that can be

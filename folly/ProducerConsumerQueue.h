@@ -1,5 +1,5 @@
 /*
- * Copyright 2017 Facebook, Inc.
+ * Copyright 2012-present Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -173,16 +173,16 @@ struct ProducerConsumerQueue {
   }
 
  private:
+  using AtomicIndex = std::atomic<unsigned int>;
+
   char pad0_[hardware_destructive_interference_size];
   const uint32_t size_;
   T* const records_;
 
-  alignas(hardware_destructive_interference_size)
-      std::atomic<unsigned int> readIndex_;
-  alignas(hardware_destructive_interference_size)
-      std::atomic<unsigned int> writeIndex_;
+  alignas(hardware_destructive_interference_size) AtomicIndex readIndex_;
+  alignas(hardware_destructive_interference_size) AtomicIndex writeIndex_;
 
-  char pad1_[hardware_destructive_interference_size - sizeof(writeIndex_)];
+  char pad1_[hardware_destructive_interference_size - sizeof(AtomicIndex)];
 };
 
 } // namespace folly

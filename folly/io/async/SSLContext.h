@@ -1,5 +1,5 @@
 /*
- * Copyright 2017 Facebook, Inc.
+ * Copyright 2014-present Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -51,7 +51,7 @@ class PasswordCollector {
    *
    * By default, OpenSSL prints a prompt on screen and request for password
    * while loading private key. To implement a custom password collector,
-   * implement this interface and register it with TSSLSocketFactory.
+   * implement this interface and register it with SSLContext.
    *
    * @param password Pass collected password back to OpenSSL
    * @param size     Maximum length of password including nullptr character
@@ -523,7 +523,7 @@ class SSLContext {
    */
   static bool matchName(const char* host, const char* pattern, int size);
 
-  FOLLY_DEPRECATED("Use folly::ssl::init")
+  [[deprecated("Use folly::ssl::init")]]
   static void initializeOpenSSL();
 
  protected:

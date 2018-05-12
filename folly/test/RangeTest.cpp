@@ -1,5 +1,5 @@
 /*
- * Copyright 2017 Facebook, Inc.
+ * Copyright 2011-present Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -30,9 +30,9 @@
 #include <boost/algorithm/string/trim.hpp>
 #include <boost/range/concepts.hpp>
 
+#include <folly/Memory.h>
 #include <folly/portability/GMock.h>
 #include <folly/portability/GTest.h>
-#include <folly/portability/Memory.h>
 #include <folly/portability/SysMman.h>
 
 using namespace folly;
@@ -799,8 +799,8 @@ TEST(StringPiece, split_step_with_process_char_delimiter_additional_args) {
   EXPECT_EQ(e, p.end());
   EXPECT_EQ(s, p);
 
-  auto const functor = [](folly::StringPiece s, folly::StringPiece expected) {
-    EXPECT_EQ(expected, s);
+  auto const functor = [](folly::StringPiece s_, folly::StringPiece expected) {
+    EXPECT_EQ(expected, s_);
     return expected;
   };
 
@@ -834,8 +834,8 @@ TEST(StringPiece, split_step_with_process_range_delimiter_additional_args) {
   EXPECT_EQ(e, p.end());
   EXPECT_EQ(s, p);
 
-  auto const functor = [](folly::StringPiece s, folly::StringPiece expected) {
-    EXPECT_EQ(expected, s);
+  auto const functor = [](folly::StringPiece s_, folly::StringPiece expected) {
+    EXPECT_EQ(expected, s_);
     return expected;
   };
 
@@ -1208,9 +1208,6 @@ TEST(CRangeFunc, Collection) {
   class IntCollection {
    public:
     constexpr IntCollection(int* d, size_t s) : data_(d), size_(s) {}
-    constexpr int* data() {
-      return data_;
-    }
     constexpr int const* data() const {
       return data_;
     }
@@ -1427,4 +1424,9 @@ TEST(Range, LiteralSuffix) {
   constexpr auto literalPieceW = L"hello"_sp;
   constexpr Range<wchar_t const*> pieceW{L"hello", 5};
   EXPECT_EQ(literalPieceW, pieceW);
+}
+
+TEST(Range, LiteralSuffixContainsNulBytes) {
+  constexpr auto literalPiece = "\0foo\0"_sp;
+  EXPECT_EQ(5u, literalPiece.size());
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2017 Facebook, Inc.
+ * Copyright 2012-present Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -154,16 +154,21 @@ TEST(ThreadCachedArena, MultiThreaded) {
   mainTester.verify();
 }
 
-TEST(ThreadCachedArena, StlAllocator) {
-  typedef std::unordered_map<
-    int, int, std::hash<int>, std::equal_to<int>,
-    StlAllocator<ThreadCachedArena, std::pair<const int, int>>> Map;
+TEST(ThreadCachedArena, ThreadCachedArenaAllocator) {
+  using Map = std::unordered_map<
+      int,
+      int,
+      std::hash<int>,
+      std::equal_to<int>,
+      ThreadCachedArenaAllocator<std::pair<const int, int>>>;
 
   static const size_t requestedBlockSize = 64;
   ThreadCachedArena arena(requestedBlockSize);
 
-  Map map {0, std::hash<int>(), std::equal_to<int>(),
-           StlAllocator<ThreadCachedArena, std::pair<const int, int>>(&arena)};
+  Map map{0,
+          std::hash<int>(),
+          std::equal_to<int>(),
+          ThreadCachedArenaAllocator<std::pair<const int, int>>(arena)};
 
   for (int i = 0; i < 1000; i++) {
     map[i] = i;
@@ -179,7 +184,7 @@ namespace {
 static const int kNumValues = 10000;
 
 BENCHMARK(bmUMStandard, iters) {
-  typedef std::unordered_map<int, int> Map;
+  using Map = std::unordered_map<int, int>;
 
   while (iters--) {
     Map map {0};
@@ -190,16 +195,20 @@ BENCHMARK(bmUMStandard, iters) {
 }
 
 BENCHMARK(bmUMArena, iters) {
-  typedef std::unordered_map<
-    int, int, std::hash<int>, std::equal_to<int>,
-    StlAllocator<ThreadCachedArena, std::pair<const int, int>>> Map;
+  using Map = std::unordered_map<
+      int,
+      int,
+      std::hash<int>,
+      std::equal_to<int>,
+      ThreadCachedArenaAllocator<std::pair<const int, int>>>;
 
   while (iters--) {
     ThreadCachedArena arena;
 
-    Map map {0, std::hash<int>(), std::equal_to<int>(),
-             StlAllocator<ThreadCachedArena, std::pair<const int, int>>(
-                 &arena)};
+    Map map{0,
+            std::hash<int>(),
+            std::equal_to<int>(),
+            ThreadCachedArenaAllocator<std::pair<const int, int>>(arena)};
 
     for (int i = 0; i < kNumValues; i++) {
       map[i] = i;
@@ -207,10 +216,10 @@ BENCHMARK(bmUMArena, iters) {
   }
 }
 
-BENCHMARK_DRAW_LINE()
+BENCHMARK_DRAW_LINE();
 
 BENCHMARK(bmMStandard, iters) {
-  typedef std::map<int, int> Map;
+  using Map = std::map<int, int>;
 
   while (iters--) {
     Map map;
@@ -220,19 +229,20 @@ BENCHMARK(bmMStandard, iters) {
   }
 }
 
-BENCHMARK_DRAW_LINE()
+BENCHMARK_DRAW_LINE();
 
 BENCHMARK(bmMArena, iters) {
-  typedef std::map<
-    int, int, std::less<int>,
-    StlAllocator<ThreadCachedArena, std::pair<const int, int>>> Map;
+  using Map = std::map<
+      int,
+      int,
+      std::less<int>,
+      ThreadCachedArenaAllocator<std::pair<const int, int>>>;
 
   while (iters--) {
     ThreadCachedArena arena;
 
-    Map map {std::less<int>(),
-             StlAllocator<ThreadCachedArena, std::pair<const int, int>>(
-                 &arena)};
+    Map map{std::less<int>(),
+            ThreadCachedArenaAllocator<std::pair<const int, int>>(arena)};
 
     for (int i = 0; i < kNumValues; i++) {
       map[i] = i;
@@ -240,7 +250,7 @@ BENCHMARK(bmMArena, iters) {
   }
 }
 
-BENCHMARK_DRAW_LINE()
+BENCHMARK_DRAW_LINE();
 
 } // namespace
 

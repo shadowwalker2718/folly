@@ -1,5 +1,5 @@
 /*
- * Copyright 2017 Facebook, Inc.
+ * Copyright 2014-present Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,6 +20,7 @@
 
 #include <folly/io/IOBuf.h>
 #include <folly/io/async/AsyncSocketBase.h>
+#include <folly/io/async/AsyncTransportCertificate.h>
 #include <folly/io/async/DelayedDestruction.h>
 #include <folly/io/async/EventBase.h>
 #include <folly/portability/OpenSSL.h>
@@ -387,6 +388,20 @@ class AsyncTransport : public DelayedDestruction, public AsyncSocketBase {
    * The local certificate used for this connection. May be null
    */
   virtual const X509* getSelfCert() const {
+    return nullptr;
+  }
+
+  /**
+   * Get the peer certificate information if any
+   */
+  virtual const AsyncTransportCertificate* getPeerCertificate() const {
+    return nullptr;
+  }
+
+  /**
+   * Get the certificate information of this transport, if any
+   */
+  virtual const AsyncTransportCertificate* getSelfCertificate() const {
     return nullptr;
   }
 

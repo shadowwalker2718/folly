@@ -1,5 +1,5 @@
 /*
- * Copyright 2017-present Facebook, Inc.
+ * Copyright 2014-present Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -48,6 +48,9 @@ TEST(FiberManager, batonTimedWaitTimeout) {
   auto& loopController =
       dynamic_cast<SimpleLoopController&>(manager.loopController());
 
+  auto now = SimpleLoopController::Clock::now();
+  loopController.setTimeFunc([&] { return now; });
+
   auto loopFunc = [&]() {
     if (!taskAdded) {
       manager.addTask([&]() {
@@ -72,7 +75,7 @@ TEST(FiberManager, batonTimedWaitTimeout) {
       });
       taskAdded = true;
     } else {
-      std::this_thread::sleep_for(std::chrono::milliseconds(50));
+      now += std::chrono::milliseconds(50);
       iterations++;
     }
   };
@@ -1566,7 +1569,7 @@ TEST(FiberManager, semaphore) {
 
     {
       std::shared_ptr<folly::EventBase> completionCounter(
-          &evb, [](folly::EventBase* evb) { evb->terminateLoopSoon(); });
+          &evb, [](folly::EventBase* evb_) { evb_->terminateLoopSoon(); });
 
       for (size_t i = 0; i < kTasks; ++i) {
         manager.addTask([&, completionCounter]() {

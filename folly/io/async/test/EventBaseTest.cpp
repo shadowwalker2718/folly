@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-present Facebook, Inc.
+ * Copyright 2014-present Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -163,11 +163,11 @@ class TestHandler : public EventHandler {
   }
 
   struct EventRecord {
-    EventRecord(uint16_t events, size_t bytesRead, size_t bytesWritten)
-      : events(events)
+    EventRecord(uint16_t events_, size_t bytesRead_, size_t bytesWritten_)
+      : events(events_)
       , timestamp()
-      , bytesRead(bytesRead)
-      , bytesWritten(bytesWritten) {}
+      , bytesRead(bytesRead_)
+      , bytesWritten(bytesWritten_) {}
 
     uint16_t events;
     TimePoint timestamp;
@@ -1073,14 +1073,63 @@ TEST(EventBaseTest, DestroyTimeout) {
   T_CHECK_TIMEOUT(start, end, milliseconds(10));
 }
 
+/**
+ * Test the scheduled executor impl
+ */
+TEST(EventBaseTest, ScheduledFn) {
+  EventBase eb;
+
+  TimePoint timestamp1(false);
+  TimePoint timestamp2(false);
+  TimePoint timestamp3(false);
+  eb.schedule(std::bind(&TimePoint::reset, &timestamp1), milliseconds(9));
+  eb.schedule(std::bind(&TimePoint::reset, &timestamp2), milliseconds(19));
+  eb.schedule(std::bind(&TimePoint::reset, &timestamp3), milliseconds(39));
+
+  TimePoint start;
+  eb.loop();
+  TimePoint end;
+
+  T_CHECK_TIMEOUT(start, timestamp1, milliseconds(9));
+  T_CHECK_TIMEOUT(start, timestamp2, milliseconds(19));
+  T_CHECK_TIMEOUT(start, timestamp3, milliseconds(39));
+  T_CHECK_TIMEOUT(start, end, milliseconds(39));
+}
+
+TEST(EventBaseTest, ScheduledFnAt) {
+  EventBase eb;
+
+  TimePoint timestamp0(false);
+  TimePoint timestamp1(false);
+  TimePoint timestamp2(false);
+  TimePoint timestamp3(false);
+  eb.scheduleAt(
+      std::bind(&TimePoint::reset, &timestamp1), eb.now() - milliseconds(5));
+  eb.scheduleAt(
+      std::bind(&TimePoint::reset, &timestamp1), eb.now() + milliseconds(9));
+  eb.scheduleAt(
+      std::bind(&TimePoint::reset, &timestamp2), eb.now() + milliseconds(19));
+  eb.scheduleAt(
+      std::bind(&TimePoint::reset, &timestamp3), eb.now() + milliseconds(39));
+
+  TimePoint start;
+  eb.loop();
+  TimePoint end;
+
+  T_CHECK_TIME_LT(start, timestamp0, milliseconds(0));
+  T_CHECK_TIMEOUT(start, timestamp1, milliseconds(9));
+  T_CHECK_TIMEOUT(start, timestamp2, milliseconds(19));
+  T_CHECK_TIMEOUT(start, timestamp3, milliseconds(39));
+  T_CHECK_TIMEOUT(start, end, milliseconds(39));
+}
 
 ///////////////////////////////////////////////////////////////////////////
 // Test for runInThreadTestFunc()
 ///////////////////////////////////////////////////////////////////////////
 
 struct RunInThreadData {
-  RunInThreadData(int numThreads, int opsPerThread)
-    : opsPerThread(opsPerThread)
+  RunInThreadData(int numThreads, int opsPerThread_)
+    : opsPerThread(opsPerThread_)
     , opsToGo(numThreads*opsPerThread) {}
 
   EventBase evb;
@@ -1091,12 +1140,12 @@ struct RunInThreadData {
 };
 
 struct RunInThreadArg {
-  RunInThreadArg(RunInThreadData* data,
+  RunInThreadArg(RunInThreadData* data_,
                  int threadId,
-                 int value)
-    : data(data)
+                 int value_)
+    : data(data_)
     , thread(threadId)
-    , value(value) {}
+    , value(value_) {}
 
   RunInThreadData* data;
   int thread;
@@ -1540,11 +1589,11 @@ class IdleTimeTimeoutSeries : public AsyncTimeout {
     timeouts_(0),
     timeout_(timeout) {
       scheduleTimeout(1);
-    }
+  }
 
-    ~IdleTimeTimeoutSeries() override {}
+  ~IdleTimeTimeoutSeries() override {}
 
-    void timeoutExpired() noexcept override {
+  void timeoutExpired() noexcept override {
     ++timeouts_;
 
     if(timeout_.empty()){
@@ -1579,17 +1628,22 @@ class IdleTimeTimeoutSeries : public AsyncTimeout {
  */
 TEST(EventBaseTest, IdleTime) {
   EventBase eventBase;
-  eventBase.setLoadAvgMsec(1000ms);
-  eventBase.resetLoadAvg(5900.0);
   std::deque<uint64_t> timeouts0(4, 8080);
   timeouts0.push_front(8000);
   timeouts0.push_back(14000);
   IdleTimeTimeoutSeries tos0(&eventBase, timeouts0);
   std::deque<uint64_t> timeouts(20, 20);
   std::unique_ptr<IdleTimeTimeoutSeries> tos;
-  int64_t testStart = duration_cast<microseconds>(
-    std::chrono::steady_clock::now().time_since_epoch()).count();
   bool hostOverloaded = false;
+
+  // Loop once before starting the main test.  This will run NotificationQueue
+  // callbacks that get automatically installed when the EventBase is first
+  // created.  We want to make sure they don't interfere with the timing
+  // operations below.
+  eventBase.loopOnce(EVLOOP_NONBLOCK);
+  eventBase.setLoadAvgMsec(1000ms);
+  eventBase.resetLoadAvg(5900.0);
+  auto testStart = std::chrono::steady_clock::now();
 
   int latencyCallbacks = 0;
   eventBase.setMaxLatency(6000us, [&]() {
@@ -1601,25 +1655,26 @@ TEST(EventBaseTest, IdleTime) {
     if (tos0.getTimeouts() < 6) {
       // This could only happen if the host this test is running
       // on is heavily loaded.
-      int64_t maxLatencyReached = duration_cast<microseconds>(
-          std::chrono::steady_clock::now().time_since_epoch()).count();
-      ASSERT_LE(43800, maxLatencyReached - testStart);
+      int64_t usElapsed = duration_cast<microseconds>(
+                              std::chrono::steady_clock::now() - testStart)
+                              .count();
+      EXPECT_LE(43800, usElapsed);
       hostOverloaded = true;
       return;
     }
-    ASSERT_EQ(6, tos0.getTimeouts());
-    ASSERT_GE(6100, eventBase.getAvgLoopTime() - 1200);
-    ASSERT_LE(6100, eventBase.getAvgLoopTime() + 1200);
+    EXPECT_EQ(6, tos0.getTimeouts());
+    EXPECT_GE(6100, eventBase.getAvgLoopTime() - 1200);
+    EXPECT_LE(6100, eventBase.getAvgLoopTime() + 1200);
     tos = std::make_unique<IdleTimeTimeoutSeries>(&eventBase, timeouts);
   });
 
-  // Kick things off with an "immedite" timeout
+  // Kick things off with an "immediate" timeout
   tos0.scheduleTimeout(1);
 
   eventBase.loop();
 
   if (hostOverloaded) {
-    return;
+    SKIP() << "host too heavily loaded to execute test";
   }
 
   ASSERT_EQ(1, latencyCallbacks);
@@ -1750,11 +1805,11 @@ TEST(EventBaseTest, LoopKeepAlive) {
   EventBase evb;
 
   bool done = false;
-  std::thread t([&, loopKeepAlive = evb.getKeepAliveToken() ]() mutable {
+  std::thread t([&, loopKeepAlive = getKeepAliveToken(evb)]() mutable {
     /* sleep override */ std::this_thread::sleep_for(
         std::chrono::milliseconds(100));
     evb.runInEventBaseThread(
-        [&done, loopKeepAlive = std::move(loopKeepAlive) ] { done = true; });
+        [&done, loopKeepAlive = std::move(loopKeepAlive)] { done = true; });
   });
 
   evb.loop();
@@ -1771,11 +1826,11 @@ TEST(EventBaseTest, LoopKeepAliveInLoop) {
   std::thread t;
 
   evb.runInEventBaseThread([&] {
-    t = std::thread([&, loopKeepAlive = evb.getKeepAliveToken() ]() mutable {
+    t = std::thread([&, loopKeepAlive = getKeepAliveToken(evb)]() mutable {
       /* sleep override */ std::this_thread::sleep_for(
           std::chrono::milliseconds(100));
       evb.runInEventBaseThread(
-          [&done, loopKeepAlive = std::move(loopKeepAlive) ] { done = true; });
+          [&done, loopKeepAlive = std::move(loopKeepAlive)] { done = true; });
     });
   });
 
@@ -1799,9 +1854,9 @@ TEST(EventBaseTest, LoopKeepAliveWithLoopForever) {
 
   {
     auto* ev = evb.get();
-    Executor::KeepAlive keepAlive;
+    Executor::KeepAlive<EventBase> keepAlive;
     ev->runInEventBaseThreadAndWait(
-        [&ev, &keepAlive] { keepAlive = ev->getKeepAliveToken(); });
+        [&ev, &keepAlive] { keepAlive = getKeepAliveToken(ev); });
     ASSERT_FALSE(done) << "Loop finished before we asked it to";
     ev->terminateLoopSoon();
     /* sleep override */
@@ -1819,11 +1874,9 @@ TEST(EventBaseTest, LoopKeepAliveShutdown) {
 
   bool done = false;
 
-  std::thread t([
-    &done,
-    loopKeepAlive = evb->getKeepAliveToken(),
-    evbPtr = evb.get()
-  ]() mutable {
+  std::thread t([&done,
+                 loopKeepAlive = getKeepAliveToken(evb.get()),
+                 evbPtr = evb.get()]() mutable {
     /* sleep override */ std::this_thread::sleep_for(
         std::chrono::milliseconds(100));
     evbPtr->runInEventBaseThread(
@@ -1852,10 +1905,10 @@ TEST(EventBaseTest, LoopKeepAliveAtomic) {
   }
 
   for (size_t i = 0; i < kNumThreads; ++i) {
-    ts.emplace_back([ evbPtr = evb.get(), batonPtr = batons[i].get(), &done ] {
-      std::vector<Executor::KeepAlive> keepAlives;
+    ts.emplace_back([evbPtr = evb.get(), batonPtr = batons[i].get(), &done] {
+      std::vector<Executor::KeepAlive<EventBase>> keepAlives;
       for (size_t j = 0; j < kNumTasks; ++j) {
-        keepAlives.emplace_back(evbPtr->getKeepAliveToken());
+        keepAlives.emplace_back(getKeepAliveToken(evbPtr));
       }
 
       batonPtr->post();
@@ -1880,6 +1933,11 @@ TEST(EventBaseTest, LoopKeepAliveAtomic) {
   for (auto& t : ts) {
     t.join();
   }
+}
+
+TEST(EventBaseTest, LoopKeepAliveCast) {
+  EventBase evb;
+  Executor::KeepAlive<> keepAlive = getKeepAliveToken(evb);
 }
 
 TEST(EventBaseTest, DrivableExecutorTest) {
@@ -1909,6 +1967,13 @@ TEST(EventBaseTest, DrivableExecutorTest) {
   EXPECT_TRUE(f2.isReady());
 
   t.join();
+}
+
+TEST(EventBaseTest, IOExecutorTest) {
+  EventBase base;
+
+  // Ensure EventBase manages itself as an IOExecutor.
+  EXPECT_EQ(base.getEventBase(), &base);
 }
 
 TEST(EventBaseTest, RequestContextTest) {

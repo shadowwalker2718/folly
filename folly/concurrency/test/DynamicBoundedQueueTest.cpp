@@ -93,17 +93,6 @@ TEST(DynamicBoundedQueue, basic) {
   basic_test<DMPMC, true>();
 }
 
-TEST(DynamicBoundedQueue, size) {
-  {
-    folly::DynamicBoundedQueue<int, true, true, true> q(10);
-    ASSERT_EQ(sizeof(q), 640);
-  }
-  {
-    folly::DynamicBoundedQueue<uint64_t, false, false, false, 7, 4> q(10);
-    ASSERT_EQ(sizeof(q), 80);
-  }
-}
-
 template <template <typename, bool, typename> class Q, bool MayBlock>
 void move_test() {
   struct Foo {

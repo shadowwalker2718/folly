@@ -1,5 +1,5 @@
 /*
- * Copyright 2017 Facebook, Inc.
+ * Copyright 2017-present Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +16,7 @@
 
 #pragma once
 
+#include <folly/DefaultKeepAliveExecutor.h>
 #include <folly/executors/ThreadPoolExecutor.h>
 
 namespace folly {
@@ -60,12 +61,19 @@ namespace folly {
  * priority tasks could still hog all the threads. (at last check pthreads
  * thread priorities didn't work very well).
  */
-class CPUThreadPoolExecutor : public ThreadPoolExecutor {
+class CPUThreadPoolExecutor : public ThreadPoolExecutor,
+                              public DefaultKeepAliveExecutor {
  public:
   struct CPUTask;
 
   CPUThreadPoolExecutor(
       size_t numThreads,
+      std::unique_ptr<BlockingQueue<CPUTask>> taskQueue,
+      std::shared_ptr<ThreadFactory> threadFactory =
+          std::make_shared<NamedThreadFactory>("CPUThreadPool"));
+
+  CPUThreadPoolExecutor(
+      std::pair<size_t, size_t> numThreads,
       std::unique_ptr<BlockingQueue<CPUTask>> taskQueue,
       std::shared_ptr<ThreadFactory> threadFactory =
           std::make_shared<NamedThreadFactory>("CPUThreadPool"));
@@ -104,6 +112,8 @@ class CPUThreadPoolExecutor : public ThreadPoolExecutor {
       std::chrono::milliseconds expiration,
       Func expireCallback = nullptr);
 
+  size_t getTaskQueueSize() const;
+
   uint8_t getNumPriorities() const override;
 
   struct CPUTask : public ThreadPoolExecutor::Task {
@@ -129,7 +139,10 @@ class CPUThreadPoolExecutor : public ThreadPoolExecutor {
  private:
   void threadRun(ThreadPtr thread) override;
   void stopThreads(size_t n) override;
-  uint64_t getPendingTaskCountImpl(const RWSpinLock::ReadHolder&) override;
+  size_t getPendingTaskCountImpl() override;
+
+  bool tryDecrToStop();
+  bool taskShouldStop(folly::Optional<CPUTask>&);
 
   std::unique_ptr<BlockingQueue<CPUTask>> taskQueue_;
   std::atomic<ssize_t> threadsToStop_{0};

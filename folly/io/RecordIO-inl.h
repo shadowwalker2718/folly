@@ -1,5 +1,5 @@
 /*
- * Copyright 2017 Facebook, Inc.
+ * Copyright 2013-present Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -59,7 +59,7 @@ inline auto RecordIOReader::seek(off_t pos) const -> Iterator {
 
 namespace recordio_helpers {
 
-namespace detail {
+namespace recordio_detail {
 
 FOLLY_PACK_PUSH
 struct Header {
@@ -82,9 +82,9 @@ FOLLY_PACK_POP
 static_assert(offsetof(Header, headerHash) + sizeof(Header::headerHash) ==
               sizeof(Header), "invalid header layout");
 
-} // namespace detail
+} // namespace recordio_detail
 
-constexpr size_t headerSize() { return sizeof(detail::Header); }
+constexpr size_t headerSize() { return sizeof(recordio_detail::Header); }
 
 inline RecordInfo findRecord(ByteRange range, uint32_t fileId) {
   return findRecord(range, range, fileId);

@@ -1,5 +1,5 @@
 /*
- * Copyright 2017 Facebook, Inc.
+ * Copyright 2013-present Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -106,7 +106,7 @@ void RecordIOReader::Iterator::advanceToValid() {
 
 namespace recordio_helpers {
 
-using namespace detail;
+using recordio_detail::Header;
 
 namespace {
 
@@ -160,10 +160,9 @@ size_t prependHeader(std::unique_ptr<IOBuf>& buf, uint32_t fileId) {
     b->appendChain(std::move(buf));
     buf = std::move(b);
   }
-  detail::Header* header =
-    reinterpret_cast<detail::Header*>(buf->writableData());
+  Header* header = reinterpret_cast<Header*>(buf->writableData());
   memset(header, 0, sizeof(Header));
-  header->magic = detail::Header::kMagic;
+  header->magic = Header::kMagic;
   header->fileId = fileId;
   header->dataLength = uint32_t(lengthAndHash.first);
   header->dataHash = lengthAndHash.second;

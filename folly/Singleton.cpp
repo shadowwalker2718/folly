@@ -1,5 +1,5 @@
 /*
- * Copyright 2017 Facebook, Inc.
+ * Copyright 2014-present Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,6 +15,7 @@
  */
 
 #include <folly/Singleton.h>
+#include <folly/portability/Config.h>
 
 #ifndef _WIN32
 #include <dlfcn.h>
@@ -29,6 +30,10 @@
 #include <folly/Demangle.h>
 #include <folly/Format.h>
 #include <folly/ScopeGuard.h>
+
+#if FOLLY_USE_SYMBOLIZER
+#include <folly/experimental/symbolizer/Symbolizer.h> // @manual
+#endif
 
 #if !defined(_WIN32) && !defined(__APPLE__) && !defined(__ANDROID__)
 #define FOLLY_SINGLETON_HAVE_DLSYM 1
@@ -347,12 +352,12 @@ void SingletonVault::destroyInstances() {
     }
 
     for (auto& singleton_type : *creationOrder) {
-      auto singleton = singletons->at(singleton_type);
-      if (!singleton->hasLiveInstance()) {
+      auto instance = singletons->at(singleton_type);
+      if (!instance->hasLiveInstance()) {
         continue;
       }
 
-      fatalHelper.leakedSingletons_.push_back(singleton->type());
+      fatalHelper.leakedSingletons_.push_back(instance->type());
     }
   }
 
@@ -374,19 +379,49 @@ void SingletonVault::scheduleDestroyInstances() {
   // Add a dependency on folly::ThreadLocal to make sure all its static
   // singletons are initalized first.
   threadlocal_detail::StaticMeta<void, void>::instance();
-
-  class SingletonVaultDestructor {
-   public:
-    ~SingletonVaultDestructor() {
-      SingletonVault::singleton()->destroyInstances();
-    }
-  };
-
-  // Here we intialize a singleton, which calls destroyInstances in its
-  // destructor. Because of singleton destruction order - it will be destroyed
-  // before all the singletons, which were initialized before it and after all
-  // the singletons initialized after it.
-  static SingletonVaultDestructor singletonVaultDestructor;
+  std::atexit([] { SingletonVault::singleton()->destroyInstances(); });
 }
+
+// If we're using folly's Symbolizer, create a static initializer to setup
+// Singltone's to use it to print stack traces. It's important that we keep
+// this in the same compilation unit as the `SingletonVault` so that it's
+// setup/used iff singleton's are used.
+#if FOLLY_USE_SYMBOLIZER
+namespace {
+
+std::string stackTraceGetter() {
+  // Get and symbolize stack trace
+  constexpr size_t kMaxStackTraceDepth = 100;
+  symbolizer::FrameArray<kMaxStackTraceDepth> addresses;
+
+  if (!getStackTraceSafe(addresses)) {
+    return "";
+  } else {
+    constexpr size_t kDefaultCapacity = 500;
+    symbolizer::ElfCache elfCache(kDefaultCapacity);
+
+    symbolizer::Symbolizer symbolizer(&elfCache);
+    symbolizer.symbolize(addresses);
+
+    symbolizer::StringSymbolizePrinter printer;
+    printer.println(addresses);
+    return printer.str();
+  }
+}
+
+struct SetStackTraceGetter {
+  SetStackTraceGetter() {
+    SingletonVault::stackTraceGetter().store(stackTraceGetter);
+  }
+};
+
+#ifdef __APPLE__
+// OS X doesn't support constructor priorities.
+SetStackTraceGetter setStackTraceGetter;
+#else
+SetStackTraceGetter __attribute__((__init_priority__(101))) setStackTraceGetter;
+#endif
+} // namespace
+#endif
 
 } // namespace folly

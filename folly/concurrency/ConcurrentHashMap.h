@@ -126,7 +126,8 @@ class ConcurrentHashMap {
     }
   }
 
-  ConcurrentHashMap(ConcurrentHashMap&& o) noexcept {
+  ConcurrentHashMap(ConcurrentHashMap&& o) noexcept
+      : size_(o.size_), max_size_(o.max_size_) {
     for (uint64_t i = 0; i < NumShards; i++) {
       segments_[i].store(
           o.segments_[i].load(std::memory_order_relaxed),
@@ -147,6 +148,8 @@ class ConcurrentHashMap {
           std::memory_order_relaxed);
       o.segments_[i].store(nullptr, std::memory_order_relaxed);
     }
+    size_ = o.size_;
+    max_size_ = o.max_size_;
     return *this;
   }
 
@@ -158,6 +161,7 @@ class ConcurrentHashMap {
         Allocator().deallocate((uint8_t*)seg, sizeof(SegmentT));
       }
     }
+    folly::hazptr::hazptr_cleanup(folly::hazptr::default_hazptr_domain());
   }
 
   bool empty() const noexcept {
@@ -409,12 +413,14 @@ class ConcurrentHashMap {
     }
 
     ConstIterator& operator=(const ConstIterator& o) {
+      parent_ = o.parent_;
       it_ = o.it_;
       segment_ = o.segment_;
       return *this;
     }
 
     ConstIterator(const ConstIterator& o) {
+      parent_ = o.parent_;
       it_ = o.it_;
       segment_ = o.segment_;
     }
@@ -438,13 +444,17 @@ class ConcurrentHashMap {
     void next() {
       while (it_ == parent_->ensureSegment(segment_)->cend() &&
              segment_ < parent_->NumShards) {
-        segment_++;
-        auto seg = parent_->segments_[segment_].load(std::memory_order_acquire);
-        if (segment_ < parent_->NumShards) {
-          if (!seg) {
-            continue;
+        SegmentT* seg{nullptr};
+        while (!seg) {
+          segment_++;
+          seg = parent_->segments_[segment_].load(std::memory_order_acquire);
+          if (segment_ < parent_->NumShards) {
+            if (!seg) {
+              continue;
+            }
+            it_ = seg->cbegin();
           }
-          it_ = seg->cbegin();
+          break;
         }
       }
     }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2017 Facebook, Inc.
+ * Copyright 2014-present Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#include "SSLContext.h"
+#include <folly/io/async/SSLContext.h>
 
 #include <folly/Format.h>
 #include <folly/Memory.h>
@@ -680,7 +680,7 @@ std::string SSLContext::getErrors(int errnoCopy) {
     }
     const char* reason = ERR_reason_error_string(errorCode);
     if (reason == nullptr) {
-      snprintf(message, sizeof(message) - 1, "SSL error # %lu", errorCode);
+      snprintf(message, sizeof(message) - 1, "SSL error # %08lX", errorCode);
       reason = message;
     }
     errors += reason;

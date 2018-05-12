@@ -1,5 +1,5 @@
 /*
- * Copyright 2017 Facebook, Inc.
+ * Copyright 2014-present Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 #include <folly/io/async/AsyncSocket.h>
 
 #include <folly/ExceptionWrapper.h>
@@ -33,6 +32,12 @@
 #include <limits.h>
 #include <sys/types.h>
 #include <thread>
+
+#if FOLLY_HAVE_VLA
+#define FOLLY_HAVE_VLA_01 1
+#else
+#define FOLLY_HAVE_VLA_01 0
+#endif
 
 using std::string;
 using std::unique_ptr;
@@ -58,8 +63,7 @@ const AsyncSocketException socketShutdownForWritesEx(
 
 // TODO: It might help performance to provide a version of BytesWriteRequest that
 // users could derive from, so we can avoid the extra allocation for each call
-// to write()/writev().  We could templatize TFramedAsyncChannel just like the
-// protocols are currently templatized for transports.
+// to write()/writev().
 //
 // We would need the version for external users where they provide the iovec
 // storage space, and only our internal version would allocate it at the end of
@@ -237,6 +241,23 @@ int AsyncSocket::SendMsgParamsCallback::getDefaultFlags(
 
 namespace {
 static AsyncSocket::SendMsgParamsCallback defaultSendMsgParamsCallback;
+
+// Based on flags, signal the transparent handler to disable certain functions
+void disableTransparentFunctions(int fd, bool noTransparentTls, bool noTSocks) {
+#if __linux__
+  if (noTransparentTls) {
+    // Ignore return value, errors are ok
+    VLOG(5) << "Disabling TTLS for fd " << fd;
+    ::setsockopt(fd, SOL_SOCKET, SO_NO_TRANSPARENT_TLS, nullptr, 0);
+  }
+  if (noTSocks) {
+    VLOG(5) << "Disabling TSOCKS for fd " << fd;
+    // Ignore return value, errors are ok
+    ::setsockopt(fd, SOL_SOCKET, SO_NO_TSOCKS, nullptr, 0);
+  }
+#endif
+}
+
 } // namespace
 
 AsyncSocket::AsyncSocket()
@@ -282,6 +303,7 @@ AsyncSocket::AsyncSocket(EventBase* evb, int fd, uint32_t zeroCopyBufId)
           << ", zeroCopyBufId=" << zeroCopyBufId << ")";
   init();
   fd_ = fd;
+  disableTransparentFunctions(fd_, noTransparentTls_, noTSocks_);
   setCloseOnExec();
   state_ = StateEnum::ESTABLISHED;
 }
@@ -431,6 +453,7 @@ void AsyncSocket::connect(ConnectCallback* callback,
           withAddr("failed to create socket"),
           errnoCopy);
     }
+    disableTransparentFunctions(fd_, noTransparentTls_, noTSocks_);
     if (const auto shutdownSocketSet = wShutdownSocketSet_.lock()) {
       shutdownSocketSet->add(fd_);
     }
@@ -558,17 +581,6 @@ void AsyncSocket::connect(ConnectCallback* callback,
 }
 
 int AsyncSocket::socketConnect(const struct sockaddr* saddr, socklen_t len) {
-#if __linux__
-  if (noTransparentTls_) {
-    // Ignore return value, errors are ok
-    setsockopt(fd_, SOL_SOCKET, SO_NO_TRANSPARENT_TLS, nullptr, 0);
-  }
-  if (noTSocks_) {
-    VLOG(4) << "Disabling TSOCKS for fd " << fd_;
-    // Ignore return value, errors are ok
-    setsockopt(fd_, SOL_SOCKET, SO_NO_TSOCKS, nullptr, 0);
-  }
-#endif
   int rv = fsp::connect(fd_, saddr, len);
   if (rv < 0) {
     auto errnoCopy = errno;
@@ -934,6 +946,7 @@ bool AsyncSocket::isZeroCopyMsg(const cmsghdr& cmsg) const {
         (serr->ee_errno == 0) && (serr->ee_origin == SO_EE_ORIGIN_ZEROCOPY));
   }
 #endif
+  (void)cmsg;
   return false;
 }
 
@@ -954,6 +967,8 @@ void AsyncSocket::processZeroCopyMsg(const cmsghdr& cmsg) {
   for (uint32_t i = lo; i <= hi; i++) {
     releaseZeroCopyBuf(i);
   }
+#else
+  (void)cmsg;
 #endif
 }
 
@@ -981,8 +996,8 @@ void AsyncSocket::writeChain(WriteCallback* callback, unique_ptr<IOBuf>&& buf,
   if (count <= kSmallSizeMax) {
     // suppress "warning: variable length array 'vec' is used [-Wvla]"
     FOLLY_PUSH_WARNING
-    FOLLY_GCC_DISABLE_WARNING("-Wvla")
-    iovec vec[BOOST_PP_IF(FOLLY_HAVE_VLA, count, kSmallSizeMax)];
+    FOLLY_GNU_DISABLE_WARNING("-Wvla")
+    iovec vec[BOOST_PP_IF(FOLLY_HAVE_VLA_01, count, kSmallSizeMax)];
     FOLLY_POP_WARNING
 
     writeChainImpl(callback, vec, count, std::move(buf), flags);
@@ -1672,7 +1687,11 @@ void AsyncSocket::ioReady(uint16_t events) noexcept {
   // EventHandler::WRITE is set. Any of these flags can
   // indicate that there are messages available in the socket
   // error message queue.
-  handleErrMessages();
+  // Return if we handle any error messages - this is to avoid
+  // unnecessary read/write calls
+  if (handleErrMessages()) {
+    return;
+  }
 
   // Return now if handleErrMessages() detached us from our EventBase
   if (eventBase_ != originalEventBase) {
@@ -1746,7 +1765,7 @@ void AsyncSocket::prepareReadBuffer(void** buf, size_t* buflen) {
   readCallback_->getReadBuffer(buf, buflen);
 }
 
-void AsyncSocket::handleErrMessages() noexcept {
+size_t AsyncSocket::handleErrMessages() noexcept {
   // This method has non-empty implementation only for platforms
   // supporting per-socket error queues.
   VLOG(5) << "AsyncSocket::handleErrMessages() this=" << this << ", fd=" << fd_
@@ -1754,7 +1773,7 @@ void AsyncSocket::handleErrMessages() noexcept {
   if (errMessageCallback_ == nullptr && idZeroCopyBufPtrMap_.empty()) {
     VLOG(7) << "AsyncSocket::handleErrMessages(): "
             << "no callback installed - exiting.";
-    return;
+    return 0;
   }
 
 #ifdef FOLLY_HAVE_MSG_ERRQUEUE
@@ -1774,6 +1793,7 @@ void AsyncSocket::handleErrMessages() noexcept {
   msg.msg_flags = 0;
 
   int ret;
+  size_t num = 0;
   while (true) {
     ret = recvmsg(fd_, &msg, MSG_ERRQUEUE);
     VLOG(5) << "AsyncSocket::handleErrMessages(): recvmsg returned " << ret;
@@ -1789,12 +1809,14 @@ void AsyncSocket::handleErrMessages() noexcept {
           errnoCopy);
         failErrMessageRead(__func__, ex);
       }
-      return;
+
+      return num;
     }
 
     for (struct cmsghdr* cmsg = CMSG_FIRSTHDR(&msg);
          cmsg != nullptr && cmsg->cmsg_len != 0;
          cmsg = CMSG_NXTHDR(&msg, cmsg)) {
+      ++num;
       if (isZeroCopyMsg(*cmsg)) {
         processZeroCopyMsg(*cmsg);
       } else {
@@ -1804,6 +1826,8 @@ void AsyncSocket::handleErrMessages() noexcept {
       }
     }
   }
+#else
+  return 0;
 #endif // FOLLY_HAVE_MSG_ERRQUEUE
 }
 
@@ -2456,6 +2480,11 @@ void AsyncSocket::startFail() {
   // Ensure that SHUT_READ and SHUT_WRITE are set,
   // so all future attempts to read or write will be rejected
   shutdownFlags_ |= (SHUT_READ | SHUT_WRITE);
+
+  // Cancel any scheduled immediate read.
+  if (immediateReadHandler_.isLoopCallbackScheduled()) {
+    immediateReadHandler_.cancelLoopCallback();
+  }
 
   if (eventFlags_ != EventHandler::NONE) {
     eventFlags_ = EventHandler::NONE;

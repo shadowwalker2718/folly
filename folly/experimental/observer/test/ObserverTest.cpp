@@ -1,5 +1,5 @@
 /*
- * Copyright 2017 Facebook, Inc.
+ * Copyright 2016-present Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -213,15 +213,14 @@ TEST(Observer, Stress) {
 
   auto observer = makeObserver([ child = observable.getObserver(), values ]() {
     auto value = **child * 10;
-    values->withWLock(
-        [&](std::vector<int>& values) { values.push_back(value); });
+    values->withWLock([&](std::vector<int>& vals) { vals.push_back(value); });
     return value;
   });
 
   EXPECT_EQ(0, **observer);
-  values->withRLock([](const std::vector<int>& values) {
-    EXPECT_EQ(1, values.size());
-    EXPECT_EQ(0, values.back());
+  values->withRLock([](const std::vector<int>& vals) {
+    EXPECT_EQ(1, vals.size());
+    EXPECT_EQ(0, vals.back());
   });
 
   constexpr size_t numIters = 10000;
@@ -234,19 +233,19 @@ TEST(Observer, Stress) {
     std::this_thread::yield();
   }
 
-  values->withRLock([numIters = numIters](const std::vector<int>& values) {
-    EXPECT_EQ(numIters * 10, values.back());
-    EXPECT_LT(values.size(), numIters / 2);
+  values->withRLock([numIters = numIters](const std::vector<int>& vals) {
+    EXPECT_EQ(numIters * 10, vals.back());
+    EXPECT_LT(vals.size(), numIters / 2);
 
-    EXPECT_EQ(0, values[0]);
-    EXPECT_EQ(numIters * 10, values.back());
+    EXPECT_EQ(0, vals[0]);
+    EXPECT_EQ(numIters * 10, vals.back());
 
-    for (auto value : values) {
+    for (auto value : vals) {
       EXPECT_EQ(0, value % 10);
     }
 
-    for (size_t i = 0; i < values.size() - 1; ++i) {
-      EXPECT_LE(values[i], values[i + 1]);
+    for (size_t i = 0; i < vals.size() - 1; ++i) {
+      EXPECT_LE(vals[i], vals[i + 1]);
     }
   });
 }
@@ -320,4 +319,36 @@ TEST(Observer, SubscribeCallback) {
   EXPECT_EQ(4, getCallsStart);
   EXPECT_EQ(4, getCallsFinish);
   cobThread.join();
+}
+
+TEST(Observer, SetCallback) {
+  folly::observer::SimpleObservable<int> observable(42);
+  auto observer = observable.getObserver();
+  folly::Baton<> baton;
+  int callbackValue = 0;
+  size_t callbackCallsCount = 0;
+
+  auto callbackHandle =
+      observer.addCallback([&](folly::observer::Snapshot<int> snapshot) {
+        ++callbackCallsCount;
+        callbackValue = *snapshot;
+        baton.post();
+      });
+  baton.wait();
+  baton.reset();
+  EXPECT_EQ(42, callbackValue);
+  EXPECT_EQ(1, callbackCallsCount);
+
+  observable.setValue(43);
+  baton.wait();
+  baton.reset();
+  EXPECT_EQ(43, callbackValue);
+  EXPECT_EQ(2, callbackCallsCount);
+
+  callbackHandle.cancel();
+
+  observable.setValue(44);
+  EXPECT_FALSE(baton.timed_wait(std::chrono::milliseconds{100}));
+  EXPECT_EQ(43, callbackValue);
+  EXPECT_EQ(2, callbackCallsCount);
 }

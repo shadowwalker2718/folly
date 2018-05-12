@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-present Facebook, Inc.
+ * Copyright 2016-present Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -102,6 +102,19 @@ void RequestContext::onUnset() {
   }
 }
 
+std::shared_ptr<RequestContext> RequestContext::createChild() {
+  auto child = std::make_shared<RequestContext>();
+  auto rlock = state_.rlock();
+  for (const auto& entry : rlock->requestData_) {
+    auto& key = entry.first;
+    auto childData = entry.second->createChild();
+    if (childData) {
+      child->setContextData(key, std::move(childData));
+    }
+  }
+  return child;
+}
+
 void RequestContext::clearContextData(const std::string& val) {
   std::unique_ptr<RequestData> requestData;
   // Delete the RequestData after giving up the wlock just in case one of the
@@ -142,9 +155,7 @@ std::shared_ptr<RequestContext> RequestContext::setContext(
 
 std::shared_ptr<RequestContext>& RequestContext::getStaticContext() {
   using SingletonT = SingletonThreadLocal<std::shared_ptr<RequestContext>>;
-  static SingletonT singleton;
-
-  return singleton.get();
+  return SingletonT::get();
 }
 
 RequestContext* RequestContext::get() {

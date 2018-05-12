@@ -1,5 +1,5 @@
 /*
- * Copyright 2017 Facebook, Inc.
+ * Copyright 2014-present Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 #pragma once
 
 #include <folly/Optional.h>
@@ -815,6 +814,23 @@ class AsyncSocket : virtual public AsyncTransportWrapper {
    */
   bool processZeroCopyWriteInProgress() noexcept;
 
+  void setPeerCertificate(
+      std::unique_ptr<const AsyncTransportCertificate> cert) {
+    peerCertData_ = std::move(cert);
+  }
+  const AsyncTransportCertificate* getPeerCertificate() const override {
+    return peerCertData_.get();
+  }
+
+  void setSelfCertificate(
+      std::unique_ptr<const AsyncTransportCertificate> cert) {
+    selfCertData_ = std::move(cert);
+  }
+
+  const AsyncTransportCertificate* getSelfCertificate() const override {
+    return selfCertData_.get();
+  }
+
   /**
    * writeReturn is the total number of bytes written, or WRITE_ERROR on error.
    * If no data has been written, 0 is returned.
@@ -1023,7 +1039,7 @@ class AsyncSocket : virtual public AsyncTransportWrapper {
   virtual void checkForImmediateRead() noexcept;
   virtual void handleInitialReadWrite() noexcept;
   virtual void prepareReadBuffer(void** buf, size_t* buflen);
-  virtual void handleErrMessages() noexcept;
+  virtual size_t handleErrMessages() noexcept;
   virtual void handleRead() noexcept;
   virtual void handleWrite() noexcept;
   virtual void handleConnect() noexcept;
@@ -1235,6 +1251,9 @@ class AsyncSocket : virtual public AsyncTransportWrapper {
   bool trackEor_{false};
   bool zeroCopyEnabled_{false};
   bool zeroCopyVal_{false};
+
+  std::unique_ptr<const AsyncTransportCertificate> peerCertData_{nullptr};
+  std::unique_ptr<const AsyncTransportCertificate> selfCertData_{nullptr};
 };
 #ifdef _MSC_VER
 #pragma vtordisp(pop)

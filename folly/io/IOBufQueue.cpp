@@ -1,5 +1,5 @@
 /*
- * Copyright 2017 Facebook, Inc.
+ * Copyright 2013-present Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -47,9 +47,8 @@ appendToChain(unique_ptr<IOBuf>& dst, unique_ptr<IOBuf>&& src, bool pack) {
       // joining two IOBufQueues together.
       size_t copyRemaining = MAX_PACK_COPY;
       uint64_t n;
-      while (src &&
-             (n = src->length()) < copyRemaining &&
-             n < tail->tailroom()) {
+      while (src && (n = src->length()) < copyRemaining &&
+             n < tail->tailroom() && n > 0) {
         memcpy(tail->writableTail(), src->data(), n);
         tail->append(n);
         copyRemaining -= n;

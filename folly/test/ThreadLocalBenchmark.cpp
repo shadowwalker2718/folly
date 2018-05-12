@@ -1,5 +1,5 @@
 /*
- * Copyright 2017 Facebook, Inc.
+ * Copyright 2016-present Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -73,11 +73,11 @@ DEFINE_int32(numThreads, 8, "Number simultaneous threads for benchmarks.");
   }
 
 ThreadLocalPtr<int> tlp;
-REG(tlp);
+REG(tlp)
 PThreadGetSpecific<int> pthread_get_specific;
-REG(pthread_get_specific);
+REG(pthread_get_specific)
 boost::thread_specific_ptr<int> boost_tsp;
-REG(boost_tsp);
+REG(boost_tsp)
 BENCHMARK_DRAW_LINE();
 
 struct foo {

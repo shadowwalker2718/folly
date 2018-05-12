@@ -1,5 +1,5 @@
 /*
- * Copyright 2017 Facebook, Inc.
+ * Copyright 2017-present Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,7 +18,10 @@
 
 #include <folly/Likely.h>
 #include <folly/detail/Futex.h>
+#include <folly/detail/MemoryIdler.h>
 #include <folly/portability/Asm.h>
+#include <folly/synchronization/WaitOptions.h>
+#include <folly/synchronization/detail/Spin.h>
 
 #include <glog/logging.h>
 
@@ -61,11 +64,10 @@ namespace folly {
 ///   instruction to the critical path of posters.
 ///
 /// Wait options:
-///   The subclass WaitOptions contains optional per call setting for
-///   pre-block spin duration: Calls to wait(), try_wait_until(), and
-///   try_wait_for() block only after the passage of the pre-block
-///   period. The default pre-block duration is 10 microseconds. The
-///   pre block option is applicable only if MayBlock is true.
+///   WaitOptions contains optional per call setting for spin-max duration:
+///   Calls to wait(), try_wait_until(), and try_wait_for() block only after the
+///   passage of the spin-max period. The default spin-max duration is 10 usec.
+///   The spin-max option is applicable only if MayBlock is true.
 ///
 /// Functions:
 ///   bool ready():
@@ -101,11 +103,11 @@ namespace folly {
 ///     std::chrono::steady_clock::now() + std::chrono::microseconds(1)));
 /// ASSERT_FALSE(f.try_wait_until(
 ///     std::chrono::steady_clock::now() + std::chrono::microseconds(1),
-///     f.wait_options().pre_block(std::chrono::microseconds(1))));
+///     f.wait_options().spin_max(std::chrono::microseconds(1))));
 /// f.post();
 /// f.post();
 /// f.wait();
-/// f.wait(f.wait_options().pre_block(std::chrono::nanoseconds(100)));
+/// f.wait(f.wait_options().spin_max(std::chrono::nanoseconds(100)));
 /// ASSERT_TRUE(f.try_wait());
 /// ASSERT_TRUE(f.try_wait_until(
 ///     std::chrono::steady_clock::now() + std::chrono::microseconds(1)));
@@ -125,23 +127,6 @@ class SaturatingSemaphore {
   };
 
  public:
-  /** WaitOptions */
-
-  class WaitOptions {
-    std::chrono::nanoseconds dur_{std::chrono::microseconds(10)};
-
-   public:
-    FOLLY_ALWAYS_INLINE
-    std::chrono::nanoseconds pre_block() const {
-      return dur_;
-    }
-    FOLLY_ALWAYS_INLINE
-    WaitOptions& pre_block(std::chrono::nanoseconds dur) {
-      dur_ = dur;
-      return *this;
-    }
-  };
-
   FOLLY_ALWAYS_INLINE static WaitOptions wait_options() {
     return {};
   }
@@ -295,40 +280,50 @@ template <typename Clock, typename Duration>
 FOLLY_NOINLINE bool SaturatingSemaphore<MayBlock, Atom>::tryWaitSlow(
     const std::chrono::time_point<Clock, Duration>& deadline,
     const WaitOptions& opt) noexcept {
-  auto tbegin = Clock::now();
-  while (true) {
-    auto before = state_.load(std::memory_order_acquire);
+  switch (detail::spin_pause_until(deadline, opt, [=] { return ready(); })) {
+    case detail::spin_result::success:
+      return true;
+    case detail::spin_result::timeout:
+      return false;
+    case detail::spin_result::advance:
+      break;
+  }
+
+  if (!MayBlock) {
+    switch (detail::spin_yield_until(deadline, [=] { return ready(); })) {
+      case detail::spin_result::success:
+        return true;
+      case detail::spin_result::timeout:
+        return false;
+      case detail::spin_result::advance:
+        break;
+    }
+  }
+
+  auto before = state_.load(std::memory_order_relaxed);
+  while (before == NOTREADY &&
+         !state_.compare_exchange_strong(
+             before,
+             BLOCKED,
+             std::memory_order_relaxed,
+             std::memory_order_relaxed)) {
     if (before == READY) {
+      // TODO: move the acquire to the compare_exchange failure load after C++17
+      std::atomic_thread_fence(std::memory_order_acquire);
       return true;
     }
-    if (Clock::now() >= deadline) {
+  }
+
+  while (true) {
+    auto rv = detail::MemoryIdler::futexWaitUntil(state_, BLOCKED, deadline);
+    if (rv == detail::FutexResult::TIMEDOUT) {
+      assert(deadline != (std::chrono::time_point<Clock, Duration>::max()));
       return false;
     }
-    if (MayBlock) {
-      auto tnow = Clock::now();
-      if (tnow < tbegin) {
-        // backward time discontinuity in Clock, revise pre_block starting point
-        tbegin = tnow;
-      }
-      auto dur = std::chrono::duration_cast<Duration>(tnow - tbegin);
-      if (dur >= opt.pre_block()) {
-        if (before == NOTREADY) {
-          if (!state_.compare_exchange_strong(
-                  before,
-                  BLOCKED,
-                  std::memory_order_relaxed,
-                  std::memory_order_relaxed)) {
-            continue;
-          }
-        }
-        if (deadline == std::chrono::time_point<Clock, Duration>::max()) {
-          state_.futexWait(BLOCKED);
-        } else {
-          state_.futexWaitUntil(BLOCKED, deadline);
-        }
-      }
+
+    if (ready()) {
+      return true;
     }
-    asm_volatile_pause();
   }
 }
 

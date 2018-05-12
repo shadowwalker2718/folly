@@ -1,5 +1,5 @@
 /*
- * Copyright 2017-present Facebook, Inc.
+ * Copyright 2014-present Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -162,7 +162,7 @@ auto fold(Fn&& fn, A&& a, B&& b, Bs&&... bs) {
 //! \endcode
 class exception_wrapper final {
  private:
-  struct AnyException : std::exception {
+  struct FOLLY_EXPORT AnyException : std::exception {
     std::type_info const* typeinfo_;
     template <class T>
     /* implicit */ AnyException(T&& t) noexcept : typeinfo_(&typeid(t)) {}

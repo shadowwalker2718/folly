@@ -1,5 +1,5 @@
 /*
- * Copyright 2017 Facebook, Inc.
+ * Copyright 2017-present Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@
 
 #include <atomic>
 
+#include <folly/DefaultKeepAliveExecutor.h>
 #include <folly/executors/IOExecutor.h>
 #include <folly/executors/ThreadPoolExecutor.h>
 #include <folly/io/async/EventBaseManager.h>
@@ -49,7 +50,9 @@ namespace folly {
  * outstanding tasks belong to the event base and will be executed upon its
  * destruction.
  */
-class IOThreadPoolExecutor : public ThreadPoolExecutor, public IOExecutor {
+class IOThreadPoolExecutor : public ThreadPoolExecutor,
+                             public IOExecutor,
+                             public DefaultKeepAliveExecutor {
  public:
   explicit IOThreadPoolExecutor(
       size_t numThreads,
@@ -87,7 +90,7 @@ class IOThreadPoolExecutor : public ThreadPoolExecutor, public IOExecutor {
   std::shared_ptr<IOThread> pickThread();
   void threadRun(ThreadPtr thread) override;
   void stopThreads(size_t n) override;
-  uint64_t getPendingTaskCountImpl(const RWSpinLock::ReadHolder&) override;
+  size_t getPendingTaskCountImpl() override;
 
   std::atomic<size_t> nextThread_;
   folly::ThreadLocal<std::shared_ptr<IOThread>> thisThread_;

@@ -1,5 +1,5 @@
 /*
- * Copyright 2017 Facebook, Inc.
+ * Copyright 2011-present Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,7 +21,7 @@
 
 #include <folly/Portability.h>
 #include <folly/hash/SpookyHashV2.h>
-#include <folly/portability/BitsFunctexcept.h>
+#include <folly/lang/Exception.h>
 #include <folly/portability/Constexpr.h>
 #include <folly/portability/String.h>
 
@@ -46,7 +46,7 @@
 
 // Ignore shadowing warnings within this file, so includers can use -Wshadow.
 FOLLY_PUSH_WARNING
-FOLLY_GCC_DISABLE_WARNING("-Wshadow")
+FOLLY_GNU_DISABLE_WARNING("-Wshadow")
 
 namespace folly {
 
@@ -224,7 +224,7 @@ class Range : private boost::totally_ordered<Range<Iter>> {
   template <class T = Iter, typename detail::IsCharPointer<T>::const_type = 0>
   Range(const std::string& str, std::string::size_type startFrom) {
     if (UNLIKELY(startFrom > str.size())) {
-      std::__throw_out_of_range("index out of range");
+      throw_exception<std::out_of_range>("index out of range");
     }
     b_ = str.data() + startFrom;
     e_ = str.data() + str.size();
@@ -236,7 +236,7 @@ class Range : private boost::totally_ordered<Range<Iter>> {
       std::string::size_type startFrom,
       std::string::size_type size) {
     if (UNLIKELY(startFrom > str.size())) {
-      std::__throw_out_of_range("index out of range");
+      throw_exception<std::out_of_range>("index out of range");
     }
     b_ = str.data() + startFrom;
     if (str.size() - startFrom < size) {
@@ -274,7 +274,7 @@ class Range : private boost::totally_ordered<Range<Iter>> {
     auto const cdata = container.data();
     auto const csize = container.size();
     if (UNLIKELY(startFrom > csize)) {
-      std::__throw_out_of_range("index out of range");
+      throw_exception<std::out_of_range>("index out of range");
     }
     b_ = cdata + startFrom;
     e_ = cdata + csize;
@@ -296,7 +296,7 @@ class Range : private boost::totally_ordered<Range<Iter>> {
     auto const cdata = container.data();
     auto const csize = container.size();
     if (UNLIKELY(startFrom > csize)) {
-      std::__throw_out_of_range("index out of range");
+      throw_exception<std::out_of_range>("index out of range");
     }
     b_ = cdata + startFrom;
     if (csize - startFrom < size) {
@@ -521,14 +521,14 @@ class Range : private boost::totally_ordered<Range<Iter>> {
 
   value_type& at(size_t i) {
     if (i >= size()) {
-      std::__throw_out_of_range("index out of range");
+      throw_exception<std::out_of_range>("index out of range");
     }
     return b_[i];
   }
 
   const value_type& at(size_t i) const {
     if (i >= size()) {
-      std::__throw_out_of_range("index out of range");
+      throw_exception<std::out_of_range>("index out of range");
     }
     return b_[i];
   }
@@ -551,7 +551,7 @@ class Range : private boost::totally_ordered<Range<Iter>> {
   // B) If you have to use this exact function then make your own hasher
   //    object and copy the body over (see thrift example: D3972362).
   //    https://github.com/facebook/fbthrift/commit/f8ed502e24ab4a32a9d5f266580
-  FOLLY_DEPRECATED("Replace with folly::Hash if the hash is not serialized")
+  [[deprecated("Replace with folly::Hash if the hash is not serialized")]]
   uint32_t hash() const {
     // Taken from fbi/nstring.h:
     //    Quick and dirty bernstein hash...fine for short ascii strings
@@ -564,21 +564,21 @@ class Range : private boost::totally_ordered<Range<Iter>> {
 
   void advance(size_type n) {
     if (UNLIKELY(n > size())) {
-      std::__throw_out_of_range("index out of range");
+      throw_exception<std::out_of_range>("index out of range");
     }
     b_ += n;
   }
 
   void subtract(size_type n) {
     if (UNLIKELY(n > size())) {
-      std::__throw_out_of_range("index out of range");
+      throw_exception<std::out_of_range>("index out of range");
     }
     e_ -= n;
   }
 
   Range subpiece(size_type first, size_type length = npos) const {
     if (UNLIKELY(first > size())) {
-      std::__throw_out_of_range("index out of range");
+      throw_exception<std::out_of_range>("index out of range");
     }
 
     return Range(b_ + first, std::min(length, size() - first));
@@ -775,7 +775,7 @@ class Range : private boost::totally_ordered<Range<Iter>> {
     } else if (e == e_) {
       e_ = b;
     } else {
-      std::__throw_out_of_range("index out of range");
+      throw_exception<std::out_of_range>("index out of range");
     }
   }
 
@@ -841,7 +841,7 @@ class Range : private boost::totally_ordered<Range<Iter>> {
    */
   size_t replaceAll(const_range_type source, const_range_type dest) {
     if (source.size() != dest.size()) {
-      throw std::invalid_argument(
+      throw_exception<std::invalid_argument>(
           "replacement must have the same size as source");
     }
 
@@ -1360,6 +1360,12 @@ struct hasher<
   }
 };
 
+template <typename H, typename K>
+struct IsAvalanchingHasher;
+
+template <typename T, typename E, typename K>
+struct IsAvalanchingHasher<hasher<folly::Range<T*>, E>, K> : std::true_type {};
+
 /**
  * _sp is a user-defined literal suffix to make an appropriate Range
  * specialization from a literal string.
@@ -1398,4 +1404,4 @@ constexpr Range<wchar_t const*> operator"" _sp(
 
 FOLLY_POP_WARNING
 
-FOLLY_ASSUME_FBVECTOR_COMPATIBLE_1(folly::Range);
+FOLLY_ASSUME_FBVECTOR_COMPATIBLE_1(folly::Range)

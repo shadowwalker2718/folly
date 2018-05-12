@@ -1,5 +1,5 @@
 /*
- * Copyright 2017 Facebook, Inc.
+ * Copyright 2011-present Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,7 +28,6 @@
 
 #include <folly/Exception.h>
 #include <folly/Function.h>
-#include <folly/MicroSpinLock.h>
 #include <folly/Portability.h>
 #include <folly/ScopeGuard.h>
 #include <folly/SharedMutex.h>
@@ -36,6 +35,7 @@
 #include <folly/detail/AtFork.h>
 #include <folly/memory/Malloc.h>
 #include <folly/portability/PThread.h>
+#include <folly/synchronization/MicroSpinLock.h>
 
 #include <folly/detail/StaticSingletonManager.h>
 
@@ -141,6 +141,7 @@ struct ElementWrapper {
 };
 
 struct StaticMetaBase;
+struct ThreadEntryList;
 
 /**
  * Per-thread entry.  Each thread using a StaticMeta object has one.
@@ -153,7 +154,14 @@ struct ThreadEntry {
   size_t elementsCapacity{0};
   ThreadEntry* next{nullptr};
   ThreadEntry* prev{nullptr};
+  ThreadEntryList* list{nullptr};
+  ThreadEntry* listNext{nullptr};
   StaticMetaBase* meta{nullptr};
+};
+
+struct ThreadEntryList {
+  ThreadEntry* head{nullptr};
+  size_t count{0};
 };
 
 constexpr uint32_t kEntryIDInvalid = std::numeric_limits<uint32_t>::max();
@@ -279,6 +287,8 @@ struct StaticMetaBase {
     t->next = t->prev = t;
   }
 
+  static ThreadEntryList* getThreadEntryList();
+
   static void onThreadExit(void* ptr);
 
   uint32_t allocate(EntryID* ent);
@@ -370,12 +380,28 @@ struct StaticMeta : StaticMetaBase {
     ThreadEntry* threadEntry =
       static_cast<ThreadEntry*>(pthread_getspecific(key));
     if (!threadEntry) {
+      ThreadEntryList* threadEntryList = StaticMeta::getThreadEntryList();
 #ifdef FOLLY_TLD_USE_FOLLY_TLS
       static FOLLY_TLS ThreadEntry threadEntrySingleton;
       threadEntry = &threadEntrySingleton;
 #else
       threadEntry = new ThreadEntry();
 #endif
+      // if the ThreadEntry already exists
+      // but pthread_getspecific returns NULL
+      // do not add the same entry twice to the list
+      // since this would create a loop in the list
+      if (!threadEntry->list) {
+        threadEntry->list = threadEntryList;
+        threadEntry->listNext = threadEntryList->head;
+        threadEntryList->head = threadEntry;
+      }
+
+      // if we're adding a thread entry
+      // we need to increment the list count
+      // even if the entry is reused
+      threadEntryList->count++;
+
       threadEntry->meta = &meta;
       int ret = pthread_setspecific(key, threadEntry);
       checkPosixError(ret, "pthread_setspecific failed");
@@ -383,8 +409,8 @@ struct StaticMeta : StaticMetaBase {
     return threadEntry;
   }
 
-  static void preFork() {
-    instance().lock_.lock();  // Make sure it's created
+  static bool preFork() {
+    return instance().lock_.try_lock(); // Make sure it's created
   }
 
   static void onForkParent() {

@@ -1,5 +1,5 @@
 /*
- * Copyright 2017-present Facebook, Inc.
+ * Copyright 2012-present Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -76,7 +76,7 @@ int ElfFile::openNoThrow(
   // Always close fd and unmap in case of failure along the way to avoid
   // check failure above if we leave fd != -1 and the object is recycled
   // like it is inside SignalSafeElfCache
-  ScopeGuard guard = makeGuard([&] { reset(); });
+  auto guard = makeGuard([&] { reset(); });
   struct stat st;
   int r = fstat(fd_, &st);
   if (r == -1) {

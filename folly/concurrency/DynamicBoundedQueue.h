@@ -330,7 +330,8 @@ class DynamicBoundedQueue {
         capacity_(capacity + threshold(capacity)), // capacity slack
         credit_(0),
         threshold_(threshold(capacity)),
-        transfer_(0) {}
+        transfer_(0),
+        waiting_(0) {}
 
   /** destructor */
   ~DynamicBoundedQueue() {}
@@ -595,7 +596,7 @@ class DynamicBoundedQueue {
       if ((debit + weight <= capacity) && tryAddDebit(weight)) {
         return true;
       }
-      if (Clock::now() >= deadline) {
+      if (deadline < Clock::time_point::max() && Clock::now() >= deadline) {
         return false;
       }
       if (MayBlock) {

@@ -1,5 +1,5 @@
 /*
- * Copyright 2017 Facebook, Inc.
+ * Copyright 2011-present Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -48,12 +48,22 @@ static_assert(sizeof(small_vector<int,10>) ==
 static_assert(sizeof(small_vector<int32_t,1,uint32_t>) ==
                 8 + 4,
               "small_vector<int32_t,1,uint32_t> is wrong size");
-static_assert(sizeof(small_vector<int32_t,1,uint16_t>) ==
-                8 + 2,
-              "small_vector<int32_t,1,uint32_t> is wrong size");
-static_assert(sizeof(small_vector<int32_t,1,uint8_t>) ==
-                8 + 1,
-              "small_vector<int32_t,1,uint32_t> is wrong size");
+
+// Extra 2 bytes needed for alignment.
+static_assert(
+    sizeof(small_vector<int32_t, 1, uint16_t>) == 8 + 2 + 2,
+    "small_vector<int32_t,1,uint32_t> is wrong size");
+static_assert(
+    alignof(small_vector<int32_t, 1, uint16_t>) >= 4,
+    "small_vector not aligned correctly");
+
+// Extra 3 bytes needed for alignment.
+static_assert(
+    sizeof(small_vector<int32_t, 1, uint8_t>) == 8 + 1 + 3,
+    "small_vector<int32_t,1,uint32_t> is wrong size");
+static_assert(
+    alignof(small_vector<int32_t, 1, uint8_t>) >= 4,
+    "small_vector not aligned correctly");
 
 static_assert(sizeof(small_vector<int16_t,4,uint16_t>) == 10,
               "Sizeof unexpectedly large");
@@ -62,6 +72,10 @@ static_assert(sizeof(small_vector<int16_t,4,uint16_t>) == 10,
 
 static_assert(!FOLLY_IS_TRIVIALLY_COPYABLE(std::unique_ptr<int>),
               "std::unique_ptr<> is trivially copyable");
+
+static_assert(
+    alignof(small_vector<std::aligned_storage<32, 32>::type, 4>) == 32,
+    "small_vector not aligned correctly");
 
 namespace {
 
@@ -106,7 +120,7 @@ struct NontrivialType {
   static int ctored;
   explicit NontrivialType() : a(0) {}
 
-  /* implicit */ NontrivialType(int a) : a(a) {
+  /* implicit */ NontrivialType(int a_) : a(a_) {
     ++ctored;
   }
 
@@ -194,8 +208,8 @@ struct TestBasicGuarantee {
   folly::small_vector<Thrower,3> vec;
   int const prepopulate;
 
-  explicit TestBasicGuarantee(int prepopulate)
-    : prepopulate(prepopulate)
+  explicit TestBasicGuarantee(int prepopulate_)
+    : prepopulate(prepopulate_)
   {
     throwCounter = 1000;
     for (int i = 0; i < prepopulate; ++i) {
@@ -610,7 +624,7 @@ TEST(small_vector, AllHeap) {
   // Use something bigger than the pointer so it can't get inlined.
   struct SomeObj {
     double a, b, c, d, e; int val;
-    SomeObj(int val) : val(val) {}
+    SomeObj(int val_) : val(val_) {}
     bool operator==(SomeObj const& o) const {
       return o.val == val;
     }
@@ -776,7 +790,7 @@ TEST(small_vector, SelfInsert) {
 struct CheckedInt {
   static const int DEFAULT_VALUE = (int)0xdeadbeef;
   CheckedInt(): value(DEFAULT_VALUE) {}
-  explicit CheckedInt(int value): value(value) {}
+  explicit CheckedInt(int value_): value(value_) {}
   CheckedInt(const CheckedInt& rhs, int) : value(rhs.value) {}
   CheckedInt(const CheckedInt& rhs): value(rhs.value) {}
   CheckedInt(CheckedInt&& rhs) noexcept: value(rhs.value) {
@@ -962,7 +976,7 @@ class Counter {
   Counts* counts;
 
  public:
-  explicit Counter(Counts& counts) : counts(&counts) {}
+  explicit Counter(Counts& counts_) : counts(&counts_) {}
   Counter(Counter const& other) noexcept : counts(other.counts) {
     ++counts->copyCount;
   }

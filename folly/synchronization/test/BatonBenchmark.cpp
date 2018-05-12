@@ -1,5 +1,5 @@
 /*
- * Copyright 2017 Facebook, Inc.
+ * Copyright 2016-present Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,8 +27,6 @@ using namespace folly;
 using namespace folly::test;
 using folly::detail::EmulatedFutexAtomic;
 
-typedef DeterministicSchedule DSched;
-
 BENCHMARK(baton_pingpong_blocking, iters) {
   run_pingpong_test<true, std::atomic>(iters);
 }
@@ -37,7 +35,7 @@ BENCHMARK(baton_pingpong_nonblocking, iters) {
   run_pingpong_test<false, std::atomic>(iters);
 }
 
-BENCHMARK_DRAW_LINE()
+BENCHMARK_DRAW_LINE();
 
 BENCHMARK(baton_pingpong_emulated_futex_blocking, iters) {
   run_pingpong_test<true, EmulatedFutexAtomic>(iters);
@@ -47,7 +45,7 @@ BENCHMARK(baton_pingpong_emulated_futex_nonblocking, iters) {
   run_pingpong_test<false, EmulatedFutexAtomic>(iters);
 }
 
-BENCHMARK_DRAW_LINE()
+BENCHMARK_DRAW_LINE();
 
 BENCHMARK(posix_sem_pingpong, iters) {
   sem_t sems[3];

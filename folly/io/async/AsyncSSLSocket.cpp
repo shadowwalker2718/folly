@@ -1,5 +1,5 @@
 /*
- * Copyright 2017 Facebook, Inc.
+ * Copyright 2014-present Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,7 +19,6 @@
 #include <folly/io/async/EventBase.h>
 #include <folly/portability/Sockets.h>
 
-#include <boost/noncopyable.hpp>
 #include <errno.h>
 #include <fcntl.h>
 #include <sys/types.h>
@@ -78,42 +77,42 @@ class AsyncSSLSocketConnector: public AsyncSocket::ConnectCallback,
  private:
   AsyncSSLSocket *sslSocket_;
   AsyncSSLSocket::ConnectCallback *callback_;
-  int timeout_;
-  int64_t startTime_;
+  std::chrono::milliseconds timeout_;
+  std::chrono::steady_clock::time_point startTime_;
 
  protected:
   ~AsyncSSLSocketConnector() override {}
 
  public:
-  AsyncSSLSocketConnector(AsyncSSLSocket *sslSocket,
-                           AsyncSocket::ConnectCallback *callback,
-                           int timeout) :
-      sslSocket_(sslSocket),
-      callback_(callback),
-      timeout_(timeout),
-      startTime_(std::chrono::duration_cast<std::chrono::milliseconds>(
-                   std::chrono::steady_clock::now().time_since_epoch()).count()) {
-  }
+  AsyncSSLSocketConnector(
+      AsyncSSLSocket* sslSocket,
+      AsyncSocket::ConnectCallback* callback,
+      std::chrono::milliseconds timeout)
+      : sslSocket_(sslSocket),
+        callback_(callback),
+        timeout_(timeout),
+        startTime_(std::chrono::steady_clock::now()) {}
 
   void connectSuccess() noexcept override {
     VLOG(7) << "client socket connected";
 
-    int64_t timeoutLeft = 0;
-    if (timeout_ > 0) {
-      auto curTime = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now().time_since_epoch()).count();
+    std::chrono::milliseconds timeoutLeft{0};
+    if (timeout_ > std::chrono::milliseconds::zero()) {
+      auto curTime = std::chrono::steady_clock::now();
 
-      timeoutLeft = timeout_ - (curTime - startTime_);
-      if (timeoutLeft <= 0) {
+      timeoutLeft = std::chrono::duration_cast<std::chrono::milliseconds>(
+          timeout_ - (curTime - startTime_));
+      if (timeoutLeft <= std::chrono::milliseconds::zero()) {
         AsyncSocketException ex(
             AsyncSocketException::TIMED_OUT,
-            folly::sformat("SSL connect timed out after {}ms", timeout_));
+            folly::sformat(
+                "SSL connect timed out after {}ms", timeout_.count()));
         fail(ex);
         delete this;
         return;
       }
     }
-    sslSocket_->sslConn(this, std::chrono::milliseconds(timeoutLeft));
+    sslSocket_->sslConn(this, timeoutLeft);
   }
 
   void connectErr(const AsyncSocketException& ex) noexcept override {
@@ -365,9 +364,11 @@ void AsyncSSLSocket::shutdownWriteNow() {
 }
 
 bool AsyncSSLSocket::good() const {
-  return (AsyncSocket::good() &&
-          (sslState_ == STATE_ACCEPTING || sslState_ == STATE_CONNECTING ||
-           sslState_ == STATE_ESTABLISHED || sslState_ == STATE_UNENCRYPTED));
+  return (
+      AsyncSocket::good() &&
+      (sslState_ == STATE_ACCEPTING || sslState_ == STATE_CONNECTING ||
+       sslState_ == STATE_ESTABLISHED || sslState_ == STATE_UNENCRYPTED ||
+       sslState_ == STATE_UNINIT));
 }
 
 // The TAsyncTransport definition of 'good' states that the transport is
@@ -690,8 +691,7 @@ void AsyncSSLSocket::connect(
   noTransparentTls_ = true;
   totalConnectTimeout_ = totalConnectTimeout;
   if (sslState_ != STATE_UNENCRYPTED) {
-    callback = new AsyncSSLSocketConnector(
-        this, callback, int(totalConnectTimeout.count()));
+    callback = new AsyncSSLSocketConnector(this, callback, totalConnectTimeout);
   }
   AsyncSocket::connect(
       callback, address, int(connectTimeout.count()), options, bindAddr);
@@ -823,6 +823,9 @@ const SSL* AsyncSSLSocket::getSSL() const {
 }
 
 void AsyncSSLSocket::setSSLSession(SSL_SESSION *session, bool takeOwnership) {
+  if (sslSession_) {
+    SSL_SESSION_free(sslSession_);
+  }
   sslSession_ = session;
   if (!takeOwnership && session != nullptr) {
     // Increment the reference count
@@ -972,6 +975,9 @@ bool AsyncSSLSocket::willBlock(int ret,
 #ifdef SSL_ERROR_WANT_ECDSA_ASYNC_PENDING
               || error == SSL_ERROR_WANT_ECDSA_ASYNC_PENDING
 #endif
+#ifdef SSL_ERROR_WANT_ASYNC // OpenSSL 1.1.0 Async API
+              || error == SSL_ERROR_WANT_ASYNC
+#endif
               )) {
     // Our custom openssl function has kicked off an async request to do
     // rsa/ecdsa private key operation.  When that call returns, a callback will
@@ -983,6 +989,35 @@ bool AsyncSSLSocket::willBlock(int ret,
       EventHandler::NONE,
       EventHandler::READ | EventHandler::WRITE
     );
+
+#ifdef SSL_ERROR_WANT_ASYNC
+    if (error == SSL_ERROR_WANT_ASYNC) {
+      size_t numfds;
+      if (SSL_get_all_async_fds(ssl_, NULL, &numfds) <= 0) {
+        VLOG(4) << "SSL_ERROR_WANT_ASYNC but no async FDs set!";
+        return false;
+      }
+      if (numfds != 1) {
+        VLOG(4) << "SSL_ERROR_WANT_ASYNC expected exactly 1 async fd, got "
+                << numfds;
+        return false;
+      }
+      OSSL_ASYNC_FD ofd; // This should just be an int in POSIX
+      if (SSL_get_all_async_fds(ssl_, &ofd, &numfds) <= 0) {
+        VLOG(4) << "SSL_ERROR_WANT_ASYNC cant get async fd";
+        return false;
+      }
+
+      auto asyncPipeReader = AsyncPipeReader::newReader(eventBase_, ofd);
+      auto asyncPipeReaderPtr = asyncPipeReader.get();
+      if (!asyncOperationFinishCallback_) {
+        asyncOperationFinishCallback_.reset(
+            new DefaultOpenSSLAsyncFinishCallback(
+                std::move(asyncPipeReader), this));
+      }
+      asyncPipeReaderPtr->setReadCB(asyncOperationFinishCallback_.get());
+    }
+#endif
 
     // The timeout (if set) keeps running here
     return true;
@@ -1082,6 +1117,7 @@ AsyncSSLSocket::handleAccept() noexcept {
 
   int ret = SSL_accept(ssl_);
   if (ret <= 0) {
+    VLOG(3) << "SSL_accept returned: " << ret;
     int sslError;
     unsigned long errError;
     int errnoCopy = errno;

@@ -1,5 +1,5 @@
 /*
- * Copyright 2017 Facebook, Inc.
+ * Copyright 2011-present Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -589,6 +589,16 @@ TEST(Conv, StringPieceToDouble) {
       make_tuple(" 0.0  zorro", "  zorro", 0.0),
       make_tuple(" 0.0  zorro ", "  zorro ", 0.0),
       make_tuple("0.0zorro", "zorro", 0.0),
+      make_tuple("0.0eb", "eb", 0.0),
+      make_tuple("0.0EB", "EB", 0.0),
+      make_tuple("0eb", "eb", 0.0),
+      make_tuple("0EB", "EB", 0.0),
+      make_tuple("12e", "e", 12.0),
+      make_tuple("12e-", "e-", 12.0),
+      make_tuple("12e+", "e+", 12.0),
+      make_tuple("12e-f-g", "e-f-g", 12.0),
+      make_tuple("12e+f+g", "e+f+g", 12.0),
+      make_tuple("12euro", "euro", 12.0),
   };
   for (const auto& s : strs) {
     StringPiece pc(get<0>(s));
@@ -791,7 +801,7 @@ void testStr2Bool() {
   EXPECT_FALSE(to<bool>(Src("no")));
   EXPECT_FALSE(to<bool>(Src("false")));
   EXPECT_FALSE(to<bool>(Src("False")));
-  EXPECT_FALSE(to<bool>(Src("  fAlSe"  )));
+  EXPECT_FALSE(to<bool>(Src("  fAlSe  ")));
   EXPECT_FALSE(to<bool>(Src("F")));
   EXPECT_FALSE(to<bool>(Src("off")));
 
